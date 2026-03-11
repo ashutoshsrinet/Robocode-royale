@@ -1,21 +1,19 @@
-package godtier;
+package overlord;
 
 import dev.robocode.tankroyale.botapi.*;
 import dev.robocode.tankroyale.botapi.events.*;
 
-public class GodTierTank extends Bot {
+public class OverlordBot extends Bot {
 
-    private double enemyX;
-    private double enemyY;
     private double enemyEnergy = 100;
     private int moveDirection = 1;
 
-    static void main(String[] args) {
-        new GodTierTank().start();
+    public static void main(String[] args) {
+        new OverlordBot().start();
     }
 
-    GodTierTank() {
-        super(BotInfo.fromFile("GodTierTank.json"));
+    OverlordBot() {
+        super(BotInfo.fromFile("OverlordBot.json"));
     }
 
     @Override
@@ -24,12 +22,10 @@ public class GodTierTank extends Bot {
         setAdjustGunForBodyTurn(true);
         setAdjustRadarForGunTurn(true);
 
-        setRadarTurnRate(45);
-
         while (isRunning()) {
 
             if (getRadarTurnRemaining() == 0) {
-                setTurnRadarLeft(360);
+                setTurnRadarRight(360);
             }
 
             execute();
@@ -39,31 +35,33 @@ public class GodTierTank extends Bot {
     @Override
     public void onScannedBot(ScannedBotEvent e) {
 
-        double absBearing = getHeading() + e.getBearing();
-
-        enemyX = getX() + Math.sin(Math.toRadians(absBearing)) * e.getDistance();
-        enemyY = getY() + Math.cos(Math.toRadians(absBearing)) * e.getDistance();
+        double absoluteBearing = getHeading() + e.getBearing();
 
         lockRadar(e);
 
-        predictiveFire(e, absBearing);
+        dodgeBullets(e);
 
-        evasiveMovement(e);
+        aimAndFire(e, absoluteBearing);
+
+        controlDistance(e);
 
         enemyEnergy = e.getEnergy();
     }
 
-    private void predictiveFire(ScannedBotEvent e, double absBearing) {
+    private void aimAndFire(ScannedBotEvent e, double absBearing) {
 
-        double firePower = Math.min(3, Math.max(1, 400 / e.getDistance()));
+        double firePower = Math.min(3, Math.max(1.2, 400 / e.getDistance()));
 
         double bulletSpeed = 20 - firePower * 3;
 
-        double predictedX = enemyX;
-        double predictedY = enemyY;
+        double enemyX = e.getX();
+        double enemyY = e.getY();
 
         double enemyHeading = e.getHeading();
         double enemyVelocity = e.getSpeed();
+
+        double predictedX = enemyX;
+        double predictedY = enemyY;
 
         int time = 0;
 
@@ -74,19 +72,19 @@ public class GodTierTank extends Bot {
             predictedY += Math.cos(Math.toRadians(enemyHeading)) * enemyVelocity;
         }
 
-        double aim =
+        double aimAngle =
                 Math.toDegrees(Math.atan2(predictedX - getX(), predictedY - getY()));
 
-        double gunTurn = normalizeBearing(aim - getGunHeading());
+        double gunTurn = normalize(aimAngle - getGunHeading());
 
-        setTurnGunLeft(gunTurn);
+        setTurnGunRight(gunTurn);
 
         if (getGunHeat() == 0) {
             fire(firePower);
         }
     }
 
-    private void evasiveMovement(ScannedBotEvent e) {
+    private void dodgeBullets(ScannedBotEvent e) {
 
         double energyDrop = enemyEnergy - e.getEnergy();
 
@@ -95,21 +93,33 @@ public class GodTierTank extends Bot {
         }
 
         double turn =
-                normalizeBearing(e.getBearing() + 90 - 20 * moveDirection);
+                normalize(e.getBearing() + 90 - 25 * moveDirection);
 
-        setTurnLeft(turn);
-        forward(120 * moveDirection);
+        setTurnRight(turn);
+
+        setForward(120 * moveDirection);
+    }
+
+    private void controlDistance(ScannedBotEvent e) {
+
+        if (e.getDistance() < 150) {
+            setBack(100);
+        }
+
+        if (e.getDistance() > 400) {
+            setForward(100);
+        }
     }
 
     private void lockRadar(ScannedBotEvent e) {
 
         double radarTurn =
-                normalizeBearing(getHeading() + e.getBearing() - getRadarHeading());
+                normalize(getHeading() + e.getBearing() - getRadarHeading());
 
-        setTurnRadarLeft(radarTurn * 2);
+        setTurnRadarRight(radarTurn * 2);
     }
 
-    private double normalizeBearing(double angle) {
+    private double normalize(double angle) {
 
         while (angle > 180) angle -= 360;
         while (angle < -180) angle += 360;
@@ -129,14 +139,15 @@ public class GodTierTank extends Bot {
     public void onHitWall(HitWallEvent e) {
 
         moveDirection *= -1;
-        forward(100 * moveDirection);
+        setForward(150 * moveDirection);
     }
 
     @Override
     public void onHitBot(HitBotEvent e) {
 
-        if (e.isRammed()) {
-            fire(3);
-        }
+        fire(3);
+
+        moveDirection *= -1;
+        setBack(100);
     }
 }
