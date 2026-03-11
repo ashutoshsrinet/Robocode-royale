@@ -1,264 +1,142 @@
 package godtier;
 
-import robocode.*;
-import robocode.util.Utils;
+import dev.robocode.tankroyale.botapi.*;
+import dev.robocode.tankroyale.botapi.events.*;
 
-import java.awt.*;
-import java.awt.geom.Point2D;
-import java.util.ArrayList;
+public class GodTierTank extends Bot {
 
-public class GodTierBot extends AdvancedRobot {
+    private double enemyX;
+    private double enemyY;
+    private double enemyEnergy = 100;
+    private int moveDirection = 1;
 
-    static final int BINS = 47;
-
-    static double[][][][] guessFactors =
-            new double[5][5][5][BINS];
-
-    static ArrayList<EnemyWave> enemyWaves = new ArrayList<>();
-    static ArrayList<BulletWave> myWaves = new ArrayList<>();
-
-    double enemyEnergy = 100;
-
-    static class EnemyWave {
-
-        Point2D.Double fireLocation;
-        double bulletVelocity;
-        double directAngle;
-        long fireTime;
-        int direction;
+    static void main(String[] args) {
+        new GodTierTank().start();
     }
 
-    static class BulletWave {
-
-        Point2D.Double fireLocation;
-        double bulletVelocity;
-        double directAngle;
-        int direction;
-        long fireTime;
-
-        int velSegment;
-        int distSegment;
-        int accelSegment;
+    GodTierTank() {
+        super(BotInfo.fromFile("GodTierTank.json"));
     }
 
+    @Override
     public void run() {
 
-        setColors(Color.BLACK, Color.RED, Color.ORANGE);
-
+        setAdjustGunForBodyTurn(true);
         setAdjustRadarForGunTurn(true);
-        setAdjustGunForRobotTurn(true);
 
-        setTurnRadarRightRadians(Double.POSITIVE_INFINITY);
+        setRadarTurnRate(45);
 
-        while (true) {
+        while (isRunning()) {
 
-            updateEnemyWaves();
-            surfMovement();
+            if (getRadarTurnRemaining() == 0) {
+                setTurnRadarLeft(360);
+            }
 
             execute();
         }
     }
 
-    public void onScannedRobot(ScannedRobotEvent e) {
+    @Override
+    public void onScannedBot(ScannedBotEvent e) {
 
-        double absBearing = getHeadingRadians() + e.getBearingRadians();
+        double absBearing = getHeading() + e.getBearing();
 
-        double enemyX = getX() + Math.sin(absBearing) * e.getDistance();
-        double enemyY = getY() + Math.cos(absBearing) * e.getDistance();
-
-        Point2D.Double enemyLocation = new Point2D.Double(enemyX, enemyY);
-
-        detectEnemyFire(e, absBearing);
+        enemyX = getX() + Math.sin(Math.toRadians(absBearing)) * e.getDistance();
+        enemyY = getY() + Math.cos(Math.toRadians(absBearing)) * e.getDistance();
 
         lockRadar(e);
 
-        fireGun(e, absBearing, enemyLocation);
+        predictiveFire(e, absBearing);
+
+        evasiveMovement(e);
 
         enemyEnergy = e.getEnergy();
     }
 
-    void fireGun(ScannedRobotEvent e, double absBearing, Point2D.Double enemyLocation) {
+    private void predictiveFire(ScannedBotEvent e, double absBearing) {
 
-        double power = Math.min(3, Math.max(1, 400 / e.getDistance()));
+        double firePower = Math.min(3, Math.max(1, 400 / e.getDistance()));
 
-        int velSegment = (int)Math.min(4, Math.abs(e.getVelocity()) / 2);
-        int distSegment = (int)Math.min(4, e.getDistance() / 200);
-        int accelSegment = e.getVelocity() == 0 ? 0 : 2;
+        double bulletSpeed = 20 - firePower * 3;
 
-        int bestBin = BINS / 2;
-        double bestValue = 0;
+        double predictedX = enemyX;
+        double predictedY = enemyY;
 
-        for (int i = 0; i < BINS; i++) {
+        double enemyHeading = e.getHeading();
+        double enemyVelocity = e.getSpeed();
 
-            if (guessFactors[velSegment][distSegment][accelSegment][i] > bestValue) {
+        int time = 0;
 
-                bestValue = guessFactors[velSegment][distSegment][accelSegment][i];
-                bestBin = i;
-            }
+        while (++time * bulletSpeed <
+                distance(getX(), getY(), predictedX, predictedY)) {
+
+            predictedX += Math.sin(Math.toRadians(enemyHeading)) * enemyVelocity;
+            predictedY += Math.cos(Math.toRadians(enemyHeading)) * enemyVelocity;
         }
 
-        int direction = e.getVelocity() * Math.sin(e.getHeadingRadians() - absBearing) >= 0 ? 1 : -1;
+        double aim =
+                Math.toDegrees(Math.atan2(predictedX - getX(), predictedY - getY()));
 
-        double guessFactor =
-                (double)(bestBin - (BINS - 1) / 2) / ((BINS - 1) / 2);
+        double gunTurn = normalizeBearing(aim - getGunHeading());
 
-        double angleOffset =
-                direction * guessFactor * maxEscapeAngle(20 - 3 * power);
-
-        double gunAngle = absBearing + angleOffset;
-
-        setTurnGunRightRadians(Utils.normalRelativeAngle(
-                gunAngle - getGunHeadingRadians()));
+        setTurnGunLeft(gunTurn);
 
         if (getGunHeat() == 0) {
-
-            setFire(power);
-
-            BulletWave wave = new BulletWave();
-
-            wave.fireLocation = new Point2D.Double(getX(), getY());
-            wave.fireTime = getTime();
-            wave.bulletVelocity = 20 - 3 * power;
-            wave.directAngle = absBearing;
-            wave.direction = direction;
-
-            wave.velSegment = velSegment;
-            wave.distSegment = distSegment;
-            wave.accelSegment = accelSegment;
-
-            myWaves.add(wave);
+            fire(firePower);
         }
     }
 
-    void detectEnemyFire(ScannedRobotEvent e, double absBearing) {
+    private void evasiveMovement(ScannedBotEvent e) {
 
         double energyDrop = enemyEnergy - e.getEnergy();
 
         if (energyDrop > 0 && energyDrop <= 3) {
-
-            EnemyWave ew = new EnemyWave();
-
-            ew.fireTime = getTime() - 1;
-            ew.bulletVelocity = 20 - 3 * energyDrop;
-            ew.directAngle = absBearing;
-
-            ew.fireLocation = new Point2D.Double(
-                    getX() - Math.sin(absBearing) * e.getDistance(),
-                    getY() - Math.cos(absBearing) * e.getDistance());
-
-            ew.direction = e.getVelocity() >= 0 ? 1 : -1;
-
-            enemyWaves.add(ew);
-        }
-    }
-
-    void surfMovement() {
-
-        EnemyWave surfWave = getClosestWave();
-
-        if (surfWave == null)
-            return;
-
-        double dangerLeft = checkDanger(surfWave, -1);
-        double dangerRight = checkDanger(surfWave, 1);
-
-        double moveAngle;
-
-        if (dangerLeft < dangerRight)
-            moveAngle = surfWave.directAngle - Math.PI/2;
-        else
-            moveAngle = surfWave.directAngle + Math.PI/2;
-
-        moveAngle = wallSmoothing(getLocation(), moveAngle);
-
-        setTurnRightRadians(Utils.normalRelativeAngle(moveAngle - getHeadingRadians()));
-        setAhead(120);
-    }
-
-    EnemyWave getClosestWave() {
-
-        double closest = Double.POSITIVE_INFINITY;
-        EnemyWave surfWave = null;
-
-        for (EnemyWave ew : enemyWaves) {
-
-            double distance =
-                    getLocation().distance(ew.fireLocation)
-                            - (getTime() - ew.fireTime) * ew.bulletVelocity;
-
-            if (distance > ew.bulletVelocity && distance < closest) {
-
-                surfWave = ew;
-                closest = distance;
-            }
+            moveDirection *= -1;
         }
 
-        return surfWave;
+        double turn =
+                normalizeBearing(e.getBearing() + 90 - 20 * moveDirection);
+
+        setTurnLeft(turn);
+        forward(120 * moveDirection);
     }
 
-    double checkDanger(EnemyWave wave, int direction) {
-
-        int index = BINS/2 + direction * 4;
-
-        index = Math.max(0, Math.min(BINS-1, index));
-
-        return guessFactors[2][2][2][index];
-    }
-
-    void updateEnemyWaves() {
-
-        for (int i = 0; i < enemyWaves.size(); i++) {
-
-            EnemyWave ew = enemyWaves.get(i);
-
-            double distance =
-                    getLocation().distance(ew.fireLocation)
-                            - (getTime() - ew.fireTime) * ew.bulletVelocity;
-
-            if (distance < -50)
-                enemyWaves.remove(i--);
-        }
-    }
-
-    void lockRadar(ScannedRobotEvent e) {
+    private void lockRadar(ScannedBotEvent e) {
 
         double radarTurn =
-                getHeadingRadians() + e.getBearingRadians() - getRadarHeadingRadians();
+                normalizeBearing(getHeading() + e.getBearing() - getRadarHeading());
 
-        setTurnRadarRightRadians(Utils.normalRelativeAngle(radarTurn) * 2);
+        setTurnRadarLeft(radarTurn * 2);
     }
 
-    Point2D.Double getLocation() {
+    private double normalizeBearing(double angle) {
 
-        return new Point2D.Double(getX(), getY());
-    }
-
-    double maxEscapeAngle(double velocity) {
-
-        return Math.asin(8.0 / velocity);
-    }
-
-    double wallSmoothing(Point2D.Double location, double angle) {
-
-        while (!fieldContains(project(location, angle, 120))) {
-
-            angle += 0.05;
-        }
+        while (angle > 180) angle -= 360;
+        while (angle < -180) angle += 360;
 
         return angle;
     }
 
-    Point2D.Double project(Point2D.Double source, double angle, double length) {
+    private double distance(double x1, double y1, double x2, double y2) {
 
-        return new Point2D.Double(
-                source.x + Math.sin(angle) * length,
-                source.y + Math.cos(angle) * length);
+        double dx = x2 - x1;
+        double dy = y2 - y1;
+
+        return Math.sqrt(dx * dx + dy * dy);
     }
 
-    boolean fieldContains(Point2D.Double p) {
+    @Override
+    public void onHitWall(HitWallEvent e) {
 
-        return p.x > 18 && p.y > 18 &&
-                p.x < getBattleFieldWidth() - 18 &&
-                p.y < getBattleFieldHeight() - 18;
+        moveDirection *= -1;
+        forward(100 * moveDirection);
+    }
+
+    @Override
+    public void onHitBot(HitBotEvent e) {
+
+        if (e.isRammed()) {
+            fire(3);
+        }
     }
 }
