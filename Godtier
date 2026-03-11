@@ -1,19 +1,19 @@
-package overlord;
+package godmode;
 
 import dev.robocode.tankroyale.botapi.*;
 import dev.robocode.tankroyale.botapi.events.*;
 
-public class OverlordBot extends Bot {
+public class GodModeBot extends Bot {
 
-    private double enemyEnergy = 100;
     private int moveDirection = 1;
+    private double enemyEnergy = 100;
 
     public static void main(String[] args) {
-        new OverlordBot().start();
+        new GodModeBot().start();
     }
 
-    OverlordBot() {
-        super(BotInfo.fromFile("OverlordBot.json"));
+    GodModeBot() {
+        super(BotInfo.fromFile("GodModeBot.json"));
     }
 
     @Override
@@ -27,64 +27,36 @@ public class OverlordBot extends Bot {
             if (getRadarTurnRemaining() == 0) {
                 setTurnRadarRight(360);
             }
-
-            execute();
         }
     }
 
     @Override
     public void onScannedBot(ScannedBotEvent e) {
 
-        double absoluteBearing = getHeading() + e.getBearing();
-
-        lockRadar(e);
-
-        dodgeBullets(e);
-
-        aimAndFire(e, absoluteBearing);
-
-        controlDistance(e);
-
-        enemyEnergy = e.getEnergy();
-    }
-
-    private void aimAndFire(ScannedBotEvent e, double absBearing) {
-
-        double firePower = Math.min(3, Math.max(1.2, 400 / e.getDistance()));
-
-        double bulletSpeed = 20 - firePower * 3;
+        double myX = getX();
+        double myY = getY();
 
         double enemyX = e.getX();
         double enemyY = e.getY();
 
-        double enemyHeading = e.getHeading();
-        double enemyVelocity = e.getSpeed();
+        double enemyHeading = e.getDirection();
+        double enemySpeed = e.getSpeed();
 
-        double predictedX = enemyX;
-        double predictedY = enemyY;
+        double dx = enemyX - myX;
+        double dy = enemyY - myY;
 
-        int time = 0;
+        double distance = Math.sqrt(dx * dx + dy * dy);
 
-        while (++time * bulletSpeed <
-                distance(getX(), getY(), predictedX, predictedY)) {
+        detectEnemyFire(e);
 
-            predictedX += Math.sin(Math.toRadians(enemyHeading)) * enemyVelocity;
-            predictedY += Math.cos(Math.toRadians(enemyHeading)) * enemyVelocity;
-        }
+        aimPredictively(enemyX, enemyY, enemyHeading, enemySpeed, distance);
 
-        double aimAngle =
-                Math.toDegrees(Math.atan2(predictedX - getX(), predictedY - getY()));
+        evasiveMovement(enemyX, enemyY, distance);
 
-        double gunTurn = normalize(aimAngle - getGunHeading());
-
-        setTurnGunRight(gunTurn);
-
-        if (getGunHeat() == 0) {
-            fire(firePower);
-        }
+        radarLock(enemyX, enemyY);
     }
 
-    private void dodgeBullets(ScannedBotEvent e) {
+    private void detectEnemyFire(ScannedBotEvent e) {
 
         double energyDrop = enemyEnergy - e.getEnergy();
 
@@ -92,31 +64,73 @@ public class OverlordBot extends Bot {
             moveDirection *= -1;
         }
 
-        double turn =
-                normalize(e.getBearing() + 90 - 25 * moveDirection);
-
-        setTurnRight(turn);
-
-        setForward(120 * moveDirection);
+        enemyEnergy = e.getEnergy();
     }
 
-    private void controlDistance(ScannedBotEvent e) {
+    private void aimPredictively(double enemyX, double enemyY,
+                                 double enemyHeading,
+                                 double enemySpeed,
+                                 double distance) {
 
-        if (e.getDistance() < 150) {
-            setBack(100);
+        double firePower = Math.min(3, Math.max(1, 600 / distance));
+        double bulletSpeed = 20 - firePower * 3;
+
+        double myX = getX();
+        double myY = getY();
+
+        double predictedX = enemyX;
+        double predictedY = enemyY;
+
+        int time = 0;
+
+        while (++time * bulletSpeed <
+                Math.sqrt((predictedX - myX)*(predictedX - myX) +
+                          (predictedY - myY)*(predictedY - myY))) {
+
+            predictedX += Math.sin(Math.toRadians(enemyHeading)) * enemySpeed;
+            predictedY += Math.cos(Math.toRadians(enemyHeading)) * enemySpeed;
         }
 
-        if (e.getDistance() > 400) {
-            setForward(100);
+        double aimAngle =
+                Math.toDegrees(Math.atan2(predictedX - myX, predictedY - myY));
+
+        setTurnGunRight(normalize(aimAngle - getGunDirection()));
+
+        if (getGunHeat() == 0) {
+            fire(firePower);
         }
     }
 
-    private void lockRadar(ScannedBotEvent e) {
+    private void evasiveMovement(double enemyX, double enemyY, double distance) {
 
-        double radarTurn =
-                normalize(getHeading() + e.getBearing() - getRadarHeading());
+        double myX = getX();
+        double myY = getY();
 
-        setTurnRadarRight(radarTurn * 2);
+        double angleToEnemy =
+                Math.toDegrees(Math.atan2(enemyX - myX, enemyY - myY));
+
+        setTurnRight(normalize(angleToEnemy - getDirection() + 90));
+
+        setForward(150 * moveDirection);
+
+        if (distance < 120) {
+            setBack(120);
+        }
+
+        if (distance > 500) {
+            setForward(120);
+        }
+    }
+
+    private void radarLock(double enemyX, double enemyY) {
+
+        double myX = getX();
+        double myY = getY();
+
+        double radarAngle =
+                Math.toDegrees(Math.atan2(enemyX - myX, enemyY - myY));
+
+        setTurnRadarRight(normalize(radarAngle - getRadarDirection()) * 2);
     }
 
     private double normalize(double angle) {
@@ -125,14 +139,6 @@ public class OverlordBot extends Bot {
         while (angle < -180) angle += 360;
 
         return angle;
-    }
-
-    private double distance(double x1, double y1, double x2, double y2) {
-
-        double dx = x2 - x1;
-        double dy = y2 - y1;
-
-        return Math.sqrt(dx * dx + dy * dy);
     }
 
     @Override
@@ -146,8 +152,7 @@ public class OverlordBot extends Bot {
     public void onHitBot(HitBotEvent e) {
 
         fire(3);
-
         moveDirection *= -1;
-        setBack(100);
+        setBack(120);
     }
 }
