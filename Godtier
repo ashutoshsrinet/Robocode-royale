@@ -8,6 +8,10 @@ public class GodModeBot extends Bot {
     private int moveDirection = 1;
     private double enemyEnergy = 100;
 
+    private double enemyX;
+    private double enemyY;
+    private boolean enemySeen = false;
+
     public static void main(String[] args) {
         new GodModeBot().start();
     }
@@ -24,8 +28,15 @@ public class GodModeBot extends Bot {
 
         while (isRunning()) {
 
-            if (getRadarTurnRemaining() == 0) {
-                setTurnRadarRight(360);
+            // Constant radar sweep
+            setTurnRadarRight(45);
+
+            // Always move
+            setForward(120 * moveDirection);
+
+            if (enemySeen) {
+                radarLock();
+                evasiveMovement();
             }
         }
     }
@@ -33,27 +44,14 @@ public class GodModeBot extends Bot {
     @Override
     public void onScannedBot(ScannedBotEvent e) {
 
-        double myX = getX();
-        double myY = getY();
+        enemySeen = true;
 
-        double enemyX = e.getX();
-        double enemyY = e.getY();
-
-        double enemyHeading = e.getDirection();
-        double enemySpeed = e.getSpeed();
-
-        double dx = enemyX - myX;
-        double dy = enemyY - myY;
-
-        double distance = Math.sqrt(dx * dx + dy * dy);
+        enemyX = e.getX();
+        enemyY = e.getY();
 
         detectEnemyFire(e);
 
-        aimPredictively(enemyX, enemyY, enemyHeading, enemySpeed, distance);
-
-        evasiveMovement(enemyX, enemyY, distance);
-
-        radarLock(enemyX, enemyY);
+        predictiveFire(e);
     }
 
     private void detectEnemyFire(ScannedBotEvent e) {
@@ -67,16 +65,20 @@ public class GodModeBot extends Bot {
         enemyEnergy = e.getEnergy();
     }
 
-    private void aimPredictively(double enemyX, double enemyY,
-                                 double enemyHeading,
-                                 double enemySpeed,
-                                 double distance) {
-
-        double firePower = Math.min(3, Math.max(1, 600 / distance));
-        double bulletSpeed = 20 - firePower * 3;
+    private void predictiveFire(ScannedBotEvent e) {
 
         double myX = getX();
         double myY = getY();
+
+        double enemyHeading = e.getDirection();
+        double enemySpeed = e.getSpeed();
+
+        double distance = Math.sqrt(
+                (enemyX - myX)*(enemyX - myX) +
+                (enemyY - myY)*(enemyY - myY));
+
+        double firePower = Math.min(3, Math.max(1, 600 / distance));
+        double bulletSpeed = 20 - firePower * 3;
 
         double predictedX = enemyX;
         double predictedY = enemyY;
@@ -84,8 +86,9 @@ public class GodModeBot extends Bot {
         int time = 0;
 
         while (++time * bulletSpeed <
-                Math.sqrt((predictedX - myX)*(predictedX - myX) +
-                          (predictedY - myY)*(predictedY - myY))) {
+                Math.sqrt(
+                        (predictedX - myX)*(predictedX - myX) +
+                        (predictedY - myY)*(predictedY - myY))) {
 
             predictedX += Math.sin(Math.toRadians(enemyHeading)) * enemySpeed;
             predictedY += Math.cos(Math.toRadians(enemyHeading)) * enemySpeed;
@@ -101,7 +104,7 @@ public class GodModeBot extends Bot {
         }
     }
 
-    private void evasiveMovement(double enemyX, double enemyY, double distance) {
+    private void evasiveMovement() {
 
         double myX = getX();
         double myY = getY();
@@ -110,19 +113,9 @@ public class GodModeBot extends Bot {
                 Math.toDegrees(Math.atan2(enemyX - myX, enemyY - myY));
 
         setTurnRight(normalize(angleToEnemy - getDirection() + 90));
-
-        setForward(150 * moveDirection);
-
-        if (distance < 120) {
-            setBack(120);
-        }
-
-        if (distance > 500) {
-            setForward(120);
-        }
     }
 
-    private void radarLock(double enemyX, double enemyY) {
+    private void radarLock() {
 
         double myX = getX();
         double myY = getY();
@@ -145,6 +138,7 @@ public class GodModeBot extends Bot {
     public void onHitWall(HitWallEvent e) {
 
         moveDirection *= -1;
+
         setForward(150 * moveDirection);
     }
 
@@ -152,7 +146,9 @@ public class GodModeBot extends Bot {
     public void onHitBot(HitBotEvent e) {
 
         fire(3);
+
         moveDirection *= -1;
-        setBack(120);
+
+        setBack(100);
     }
 }
