@@ -1,0 +1,136 @@
+import dev.robocode.tankroyale.botapi.*;
+import dev.robocode.tankroyale.botapi.events.*;
+import java.util.*;
+
+public class ApexRumbleBot extends Bot {
+
+    private static class Enemy {
+        String name;
+        double x, y, velocity, heading, energy;
+        long time;
+    }
+
+    private final Map<String, Enemy> enemies = new HashMap<>();
+
+    public static void main(String[] args) {
+        new ApexRumbleBot().start();
+    }
+
+    public ApexRumbleBot() {
+        super(BotInfo.fromFile("bot.json"));
+    }
+
+    @Override
+    public void run() {
+        setTurnRadarRight(360); // start sweeping
+        go();
+    }
+
+    @Override
+    public void onScannedBot(ScannedBotEvent e) {
+        Enemy en = enemies.computeIfAbsent(e.getName(), k -> new Enemy());
+        en.name = e.getName();
+        en.x = e.getX();
+        en.y = e.getY();
+        en.velocity = e.getVelocity();
+        en.heading = e.getDirection();
+        en.energy = e.getEnergy();
+        en.time = getTick();
+    }
+
+    @Override
+    public void onTick(TickEvent tick) {
+        // Cleanup old enemies (not seen for 30 ticks)
+        enemies.values().removeIf(en -> getTick() - en.time > 30);
+
+        if (enemies.isEmpty()) {
+            setTurnRadarRight(360);
+            go();
+            return;
+        }
+
+        // === SPINNING RADAR (scans everything every tick) ===
+        setTurnRadarRight(360);
+
+        // === CHOOSE BEST TARGET (lowest energy + closest threat) ===
+        Enemy target = null;
+        double bestScore = Double.MAX_VALUE;
+        for (Enemy en : enemies.values()) {
+            double dist = getDistanceTo(en.x, en.y);
+            double score = en.energy * 0.6 + dist * 0.4; // favor low-energy + close
+            if (score < bestScore) {
+                bestScore = score;
+                target = en;
+            }
+        }
+
+        // === CIRCULAR TARGETING + FIRE ===
+        double power = Math.min(3.0, getEnergy() / 12.0);
+        double bulletSpeed = 20 - 3 * power;
+        double dist = getDistanceTo(target.x, target.y);
+        double ticks = dist / bulletSpeed;
+
+        double ex = target.velocity * Math.sin(Math.toRadians(target.heading));
+        double ey = target.velocity * Math.cos(Math.toRadians(target.heading));
+        double predX = target.x + ex * ticks;
+        double predY = target.y + ey * ticks;
+
+        double gunBearing = calcAbsoluteBearing(predX, predY);
+        double gunDelta = normalize(gunBearing - getGunHeading());
+        setTurnGunRight(gunDelta);
+
+        if (Math.abs(gunDelta) < 4 && getGunHeat() < 0.2) {
+            fire(power);
+        }
+
+        // === MOVEMENT: perpendicular + anti-gravity + distance control ===
+        double moveDir = normalize(calcAbsoluteBearing(target.x, target.y) + 90); // base perpendicular
+
+        // Anti-gravity repel from ALL nearby enemies
+        double repelX = 0, repelY = 0;
+        for (Enemy en : enemies.values()) {
+            double d = getDistanceTo(en.x, en.y);
+            if (d < 300 && d > 0) {
+                double dx = getX() - en.x;
+                double dy = getY() - en.y;
+                double force = (300 - d) / 300 * 2.0;
+                repelX += dx / d * force;
+                repelY += dy / d * force;
+            }
+        }
+        if (repelX != 0 || repelY != 0) {
+            double repelAngle = Math.toDegrees(Math.atan2(repelX, repelY));
+            moveDir = normalize((moveDir * 0.6 + repelAngle * 0.4));
+        }
+
+        // Random jitter + wall avoidance
+        if (Math.random() < 0.2) moveDir += (Math.random() - 0.5) * 30;
+        if (getX() < 80 || getX() > getArenaWidth() - 80 || getY() < 80 || getY() > getArenaHeight() - 80) {
+            moveDir = normalize(moveDir + 90);
+        }
+
+        setTurnRight(normalize(moveDir - getHeading()));
+
+        double desiredDist = 420;
+        if (dist < desiredDist - 100) setTargetSpeed(-7);
+        else if (dist > desiredDist + 100) setTargetSpeed(8);
+        else setTargetSpeed(6);
+
+        go();
+    }
+
+    // === HELPERS (same as before) ===
+    private double calcAbsoluteBearing(double tx, double ty) {
+        return Math.toDegrees(Math.atan2(tx - getX(), ty - getY()));
+    }
+
+    private double normalize(double angle) {
+        while (angle > 180) angle -= 360;
+        while (angle < -180) angle += 360;
+        return angle;
+    }
+
+    private double getDistanceTo(double tx, double ty) {
+        return Math.hypot(tx - getX(), ty - getY());
+    }
+}
