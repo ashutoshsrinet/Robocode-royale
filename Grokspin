@@ -2,10 +2,10 @@ import dev.robocode.tankroyale.botapi.*;
 import dev.robocode.tankroyale.botapi.events.*;
 import java.util.*;
 
-public class MaelstromBot extends Bot {
+public class TotemBot extends Bot {
 
     private static class Enemy {
-        double x, y, speed, heading, energy;
+        double x, y, speed, direction, energy;
         int time;
     }
 
@@ -13,10 +13,10 @@ public class MaelstromBot extends Bot {
     private int spinDir = 1;  // +1 or -1 for spin direction
 
     public static void main(String[] args) {
-        new MaelstromBot().start();
+        new TotemBot().start();
     }
 
-    public MaelstromBot() {
+    public TotemBot() {
         super(BotInfo.fromFile("bot.json"));
     }
 
@@ -33,15 +33,15 @@ public class MaelstromBot extends Bot {
         en.x = e.getX();
         en.y = e.getY();
         en.speed = e.getSpeed();
-        en.heading = e.getDirection();
+        en.direction = e.getDirection();
         en.energy = e.getEnergy();
-        en.time = getTime();
+        en.time = getTurnNumber();
     }
 
     @Override
     public void onTick(TickEvent tick) {
         // Cleanup stale enemies (not seen for 40 turns)
-        enemies.values().removeIf(en -> getTime() - en.time > 40);
+        enemies.values().removeIf(en -> getTurnNumber() - en.time > 40);
 
         if (enemies.isEmpty()) {
             setTurnRadarRight(360);
@@ -52,7 +52,7 @@ public class MaelstromBot extends Bot {
 
         // === GOD-MODE SPIN MOVEMENT (core SpinBot principle) ===
         // Random occasional flip to break patterns
-        if (getTime() % 150 == 0 || Math.random() < 0.008) {
+        if (getTurnNumber() % 150 == 0 || Math.random() < 0.008) {
             spinDir = -spinDir;
         }
         setTurnRight(spinDir * 10000); // infinite spin = pure evasion
@@ -79,13 +79,13 @@ public class MaelstromBot extends Bot {
             double dist = getDistanceTo(target.x, target.y);
             double ticks = dist / bulletSpeed;
 
-            double ex = target.speed * Math.sin(Math.toRadians(target.heading));
-            double ey = target.speed * Math.cos(Math.toRadians(target.heading));
+            double ex = target.speed * Math.sin(Math.toRadians(target.direction));
+            double ey = target.speed * Math.cos(Math.toRadians(target.direction));
             double predX = target.x + ex * ticks;
             double predY = target.y + ey * ticks;
 
             double gunBearing = calcAbsoluteBearing(predX, predY);
-            double gunDelta = normalize(gunBearing - getGunHeading());
+            double gunDelta = normalize(gunBearing - getGunDirection());
             setTurnGunRight(gunDelta);
 
             if (Math.abs(gunDelta) < 3 && getGunHeat() < 0.15) {
@@ -126,7 +126,7 @@ public class MaelstromBot extends Bot {
     }
 
     private double calcBearing(double absBearing) {
-        return normalize(absBearing - getHeading());
+        return normalize(absBearing - getDirection());
     }
 
     private double normalize(double angle) {
